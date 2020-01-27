@@ -1,66 +1,103 @@
-const functions = require('firebase-functions');
-const admin = require('firebase-admin');
+const functions = require("firebase-functions");
+const admin = require("firebase-admin");
 
 admin.initializeApp();
 
 // const DATA_PATH= firebase.config().watched
-const DATA_PATH = 'Status/{uuid1}/{uuid2}';
+const DATA_PATH = "Status/{uuid1}/{uuid2}";
 const THIRTY_MINUTES = 60 * 30 * 1000;
 const ONE_HOUR = 2 * THIRTY_MINUTES;
+const THREE_MINUTES = 3 * 60 * 1000;
 
-exports.nextLevel = functions.database.ref(DATA_PATH).onCreate(async (snap, context) => {
+setInterval(() => {
+  const db = admin.database();
+  db.ref("Status/CCAC")
+    .orderByKey()
+    .limitToLast(1)
+    .once("value", snap => {
+      if (new Date() - new Date(snap.val().Time) > THREE_MINUTES) {
+        console.log("Power off in CCAC");
+        db.ref("Cutoff/CCAC").push(snap.val());
+      } else {
+        console.log("Power on in CCAC");
+      }
+    });
+}, THREE_MINUTES);
+
+exports.nextLevel = functions.database
+  .ref(DATA_PATH)
+  .onCreate(async (snap, context) => {
     const uuid1 = context.params.uuid1;
     const uuid2 = context.params.uuid2;
 
     // Shifting of data from Status to Data
     let currTime = snap.val().Time;
     if (!currTime) {
-        currTime = Date.now();
+      currTime = Date.now();
     }
     //console.log(currTime);
 
-    return await admin.database().ref(`Status/${uuid1}`).once('value').then(async (snap) => {
+    return await admin
+      .database()
+      .ref(`Status/${uuid1}`)
+      .once("value")
+      .then(async snap => {
         // console.log(snap.val());
         const toWait = [];
-        snap.forEach((childSnap) => {
-            // console.log(childSnap.val());
-            if (uuid2 !== childSnap.key) {
-                //Send nodes to Data only if time difference is >= 30mins
-                if (Math.abs((new Date(currTime) - (new Date(childSnap.val().Time))) >= THIRTY_MINUTES)) {
+        snap.forEach(childSnap => {
+          // console.log(childSnap.val());
+          if (uuid2 !== childSnap.key) {
+            //Send nodes to Data only if time difference is >= 30mins
+            if (
+              Math.abs(
+                new Date(currTime) - new Date(childSnap.val().Time) >=
+                  THIRTY_MINUTES
+              )
+            ) {
+              //push data to Data from Status
+              toWait.push(
+                admin
+                  .database()
+                  .ref("Data/")
+                  .child(uuid1)
+                  .child(childSnap.key)
+                  .set(childSnap.val())
+                  .then(async () => {
+                    //Getting Score
+                    let CS = childSnap.val().ChargingState;
+                    if (CS) {
+                      const user = await admin
+                        .database()
+                        .ref(`Users/${uuid1}`)
+                        .once("value")
+                        .then(async snap => snap.val());
 
-                    //push data to Data from Status
-                    toWait.push(admin.database().ref('Data/').child(uuid1).child(childSnap.key)
-                        .set(childSnap.val()).then(async () => {
+                      if (user.Score) {
+                        user.Score++;
+                      } else {
+                        user.Score = 1;
+                      }
 
-                            //Getting Score
-                            let CS = childSnap.val().ChargingState;
-                            if (CS) {
-                                const user = await admin.database().ref(`Users/${uuid1}`).once('value')
-                                    .then(async snap => snap.val());
+                      await admin
+                        .database()
+                        .ref(`Users/${uuid1}`)
+                        .set(user)
+                        .catch(err => console.log(err.toString()))
+                        .then(() => console.log(`${uuid1} ${user.Score}`));
+                    } else {
+                      console.log("CS is " + CS + " " + uuid2);
+                    }
 
-                                if (user.Score) {
-                                    user.Score++;
-                                } else {
-                                    user.Score = 1;
-                                }
-
-                                await admin.database().ref(`Users/${uuid1}`).set(user)
-                                    .catch((err) => console.log(err.toString()))
-                                    .then(() => console.log(`${uuid1} ${user.Score}`));
-                            } else {
-                                console.log("CS is " + CS + " " + uuid2);
-                            }
-
-                            //remove old data
-                            return childSnap.ref.remove();
-                        }));
-                    //console.log(Math.abs((new Date(currTime)) - (new Date(childSnap.val().Time))));
-
-                }
+                    //remove old data
+                    return childSnap.ref.remove();
+                  })
+              );
+              //console.log(Math.abs((new Date(currTime)) - (new Date(childSnap.val().Time))));
             }
+          }
         });
         console.log(uuid1);
         console.log(currTime);
         return await Promise.all(toWait);
-    });
-});
+      });
+  });
