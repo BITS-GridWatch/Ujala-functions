@@ -17,9 +17,29 @@ setInterval(() => {
     .once("value", snap => {
       if (new Date() - new Date(snap.val().Time) > THREE_MINUTES) {
         console.log("Power off in CCAC");
-        db.ref("Cutoff/CCAC").push(snap.val());
+        const key = db.ref("Cutoff/CCAC").push();
+        db.ref("Cutoff/CCAC")
+          .child(key)
+          .set(snap.val());
       } else {
         console.log("Power on in CCAC");
+        let msg = {
+          notification: {
+            title: "cutoff",
+            body: "cutoff"
+          },
+          topic: "cutoff"
+        };
+        // admin
+        //   .messaging()
+        //   .send(msg)
+        //   .then(response => {
+        //     console.log(`Successfully sent notif : `, response);
+        //     return 0;
+        //   })
+        //   .catch(error => {
+        //     console.log(`Error sending notif : `, error);
+        //   });
       }
     });
 }, THREE_MINUTES);
