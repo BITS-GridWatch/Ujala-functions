@@ -7,41 +7,65 @@ admin.initializeApp();
 const DATA_PATH = "Status/{uuid1}/{uuid2}";
 const THIRTY_MINUTES = 60 * 30 * 1000;
 const ONE_HOUR = 2 * THIRTY_MINUTES;
-const THREE_MINUTES = 3 * 60 * 1000;
+const THREE_MINUTES = 15 * 60 * 1000;
+const TEN_MINUTES = 10 * 60 * 1000;
 
-setInterval(() => {
+setInterval(async () => {
   const db = admin.database();
-  db.ref("Status/CCAC")
+  const snap = await db.ref("Status/CCAC")
     .orderByKey()
     .limitToLast(1)
-    .once("value", snap => {
-      if (new Date() - new Date(snap.val().Time) > THREE_MINUTES) {
-        console.log("Power off in CCAC");
-        const key = db.ref("Cutoff/CCAC").push();
-        db.ref("Cutoff/CCAC")
-          .child(key)
-          .set(snap.val());
-      } else {
-        console.log("Power on in CCAC");
-        let msg = {
-          notification: {
-            title: "cutoff",
-            body: "cutoff"
-          },
-          topic: "cutoff"
-        };
-        // admin
-        //   .messaging()
-        //   .send(msg)
-        //   .then(response => {
-        //     console.log(`Successfully sent notif : `, response);
-        //     return 0;
-        //   })
-        //   .catch(error => {
-        //     console.log(`Error sending notif : `, error);
-        //   });
-      }
-    });
+    .once("value");
+  let timediff = Object.values(snap.val())[0].Time;
+  if ((new Date() - new Date(timediff)) > THREE_MINUTES) {
+    console.log("Power off in CCAC");
+    //send cutoff data to firebase
+    const key = (await db.ref("Cutoff/CCAC").push()).key;
+    await db.ref("Cutoff/CCAC")
+      .child(key)
+      .set(snap.val());
+
+    //set notification payload
+    let msg = {
+      data: {
+        title: "cutoffTitle",
+        key: timediff,
+        date: timediff
+      },
+      topic: "cutoff"
+    };
+    //send notification
+    return admin.database().ref("Flag/notif").once("value")
+      .then(async (snap_1) => {
+        if (snap_1.val() !== "sent") {
+          return admin.messaging().send(msg)
+            .then(response => {
+              console.log(`Successfully sent notification data : `, response);
+              //if notif sent update Flag/notif
+              return db.ref("Flag")
+                .child("notif")
+                .set("sent");
+              //return 0;
+            })
+            .catch(error => {
+              console.log(`Error sending notification data : `, error);
+            });
+        }
+        else
+          return 0;
+      })
+      .catch(error_1 => {
+        console.log(`Error getting flag data : `, error_1);
+      });
+  }
+  else {
+    //Power on in CCAC ADD notif flag
+    console.log("Power on in CCAC");
+    //if power back up update Flag/notif
+    return db.ref("Flag")
+      .child("notif")
+      .set("not sent");
+  }
 }, THREE_MINUTES);
 
 exports.nextLevel = functions.database
@@ -105,7 +129,7 @@ exports.nextLevel = functions.database
                         .catch(err => console.log(err.toString()))
                         .then(() => console.log(`${uuid1} ${user.Score}`));
                     } else {
-                      console.log("CS is " + CS + " " + uuid2);
+                      console.log("Charging State: " + CS + " " + uuid2);
                     }
 
                     //remove old data
@@ -116,8 +140,8 @@ exports.nextLevel = functions.database
             }
           }
         });
-        console.log(uuid1);
-        console.log(currTime);
+        console.log("UUID data moved: " +uuid1);
+        //console.log(currTime);
         return await Promise.all(toWait);
       });
   });
